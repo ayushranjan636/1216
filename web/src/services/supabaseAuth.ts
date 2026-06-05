@@ -111,13 +111,14 @@ export async function updateDisplayName(userId: string, displayName: string): Pr
 
 export async function fetchStats(_userId: string) {
   const sb = getSupabase();
-  const [msgs, mems] = await Promise.all([
+  const [msgs, calls, mems] = await Promise.all([
     sb.from('messages').select('id', { count: 'exact', head: true }).is('deleted_at', null),
+    sb.from('calls').select('id', { count: 'exact', head: true }).neq('status', 'ringing'),
     sb.from('memories').select('id', { count: 'exact', head: true }),
   ]);
   return {
     totalMessages: msgs.count ?? 0,
-    totalCalls: 0,
+    totalCalls: calls.count ?? 0,
     totalMemories: mems.count ?? 0,
   };
 }

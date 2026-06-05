@@ -101,6 +101,7 @@ export function ProfilePage() {
 
       <div className="stats-grid">
         <div className="stat-card glass"><strong>{stats.totalMessages}</strong><span>Messages</span></div>
+        <div className="stat-card glass"><strong>{stats.totalCalls}</strong><span>Calls</span></div>
         <div className="stat-card glass"><strong>{stats.totalMemories}</strong><span>Memories</span></div>
       </div>
 

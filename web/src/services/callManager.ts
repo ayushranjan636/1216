@@ -169,7 +169,13 @@ export class CallManager {
 
   async startScreenShare() {
     if (!this.pc || !this.isVideo) return;
-    this.screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      throw new Error('Screen sharing not supported');
+    }
+    this.screenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: false,
+    });
     const screenTrack = this.screenStream.getVideoTracks()[0];
     if (this.videoSender) {
       await this.videoSender.replaceTrack(screenTrack);

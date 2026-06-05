@@ -347,12 +347,22 @@
   justify-content: center;
 }
 
-.call-remote-audio {
+.call-local-mirror {
+  transform: scaleX(-1);
+}
+
+.call-media-hidden {
   position: absolute;
   width: 0;
   height: 0;
   opacity: 0;
   pointer-events: none;
+}
+
+.call-status-end {
+  color: #ff3b30;
+  font-weight: 600;
+  font-size: 18px;
 }
 
 .call-media-root {

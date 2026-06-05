@@ -12,7 +12,7 @@ import {
 import { isSupabaseMode } from '@/lib/supabase';
 import { CallManager } from '@/services/callManager';
 import type { CallSession, CallType } from '@/types';
-import { notifyIncomingCall, notifyMissedCall } from '@/services/notifications';
+import { notifyIncomingCall, notifyMissedCall, notifyCallDeclined } from '@/services/notifications';
 
 function clearTimer(ref: React.MutableRefObject<ReturnType<typeof setTimeout> | null>) {
   if (ref.current) {
@@ -26,6 +26,7 @@ export function useCall() {
   const signalUnsubRef = useRef<(() => void) | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const ringTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const endUiTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notifiedRef = useRef<string | null>(null);
   const initiatorReadyRef = useRef(false);
   const activeCallRef = useRef<CallSession | null>(null);
@@ -58,13 +59,45 @@ export function useCall() {
     if (callEndedRef.current) return;
     callEndedRef.current = true;
     clearTimer(ringTimerRef);
+    clearTimer(endUiTimerRef);
     signalUnsubRef.current?.();
     signalUnsubRef.current = null;
     callManagerRef.current?.endCall();
     callManagerRef.current = null;
     initiatorReadyRef.current = false;
     reset();
+    setTimeout(() => { callEndedRef.current = false; }, 300);
   }, [reset]);
+
+  const handleRemoteEnd = useCallback(
+    (status?: CallSession['status']) => {
+      if (callEndedRef.current) return;
+
+      if (status === 'declined' || status === 'missed') {
+        clearTimer(ringTimerRef);
+        callManagerRef.current?.endCall();
+        callManagerRef.current = null;
+        signalUnsubRef.current?.();
+        signalUnsubRef.current = null;
+
+        const current = activeCallRef.current;
+        if (current) setActiveCall({ ...current, status });
+
+        if (status === 'declined' && partner) notifyCallDeclined(partner.displayName);
+        if (status === 'missed' && partner) notifyMissedCall(partner.displayName);
+
+        callEndedRef.current = true;
+        endUiTimerRef.current = setTimeout(() => {
+          reset();
+          callEndedRef.current = false;
+        }, 2200);
+        return;
+      }
+
+      tearDown();
+    },
+    [partner, setActiveCall, reset, tearDown],
+  );
 
   useEffect(() => {
     if (!profile) return;
@@ -160,7 +193,7 @@ export function useCall() {
         ringTimerRef.current = setTimeout(async () => {
           if (callEndedRef.current) return;
           await updateCallStatus(callId, 'missed').catch(console.error);
-          tearDown();
+          handleRemoteEnd('missed');
         }, 45000);
 
         const manager = new CallManager(callId, profile.uid, partner.uid, type === 'video');
@@ -183,7 +216,7 @@ export function useCall() {
                 tearDown();
               }
             },
-            onHangup: () => tearDown(),
+            onHangup: (status) => handleRemoteEnd(status),
           });
         } else {
           wireLegacySignals(manager, call, true);
@@ -193,7 +226,7 @@ export function useCall() {
         tearDown();
       }
     },
-    [profile, partner, activeCall, setActiveCall, setIncomingCall, setCallMinimized, tearDown, attachManagerEvents, wireLegacySignals],
+    [profile, partner, activeCall, setActiveCall, setIncomingCall, setCallMinimized, tearDown, handleRemoteEnd, attachManagerEvents, wireLegacySignals],
   );
 
   const acceptCall = useCallback(async () => {
@@ -220,7 +253,7 @@ export function useCall() {
           onSignal: (signal) => {
             manager.handleSignal(signal).catch(console.error);
           },
-          onHangup: () => tearDown(),
+          onHangup: (status) => handleRemoteEnd(status),
         });
         await manager.initialize(false);
         await updateCallStatus(incomingCall.id, 'connecting', profile.uid);
@@ -233,7 +266,7 @@ export function useCall() {
       await updateCallStatus(incomingCall.id, 'declined').catch(console.error);
       tearDown();
     }
-  }, [incomingCall, profile, setActiveCall, setIncomingCall, setCallMinimized, tearDown, attachManagerEvents, wireLegacySignals]);
+  }, [incomingCall, profile, setActiveCall, setIncomingCall, setCallMinimized, tearDown, handleRemoteEnd, attachManagerEvents, wireLegacySignals]);
 
   const declineCall = useCallback(async () => {
     if (!incomingCall) return;
@@ -242,8 +275,7 @@ export function useCall() {
     setIncomingCall(null);
     notifiedRef.current = null;
     await updateCallStatus(callId, 'declined').catch(console.error);
-    if (partner) notifyMissedCall(partner.displayName);
-  }, [incomingCall, partner, setIncomingCall]);
+  }, [incomingCall, setIncomingCall]);
 
   const endCall = useCallback(async () => {
     const callId = activeCallRef.current?.id;
@@ -270,12 +302,17 @@ export function useCall() {
   const toggleScreenShare = useCallback(async () => {
     const manager = callManagerRef.current;
     if (!manager) return;
-    if (isScreenSharing) {
-      await manager.stopScreenShare();
-      setScreenSharing(false);
-    } else {
-      await manager.startScreenShare();
-      setScreenSharing(true);
+    try {
+      if (isScreenSharing) {
+        await manager.stopScreenShare();
+        setScreenSharing(false);
+      } else {
+        await manager.startScreenShare();
+        setScreenSharing(true);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Screen sharing is not supported on this device. Try on a laptop/desktop browser.');
     }
   }, [isScreenSharing, setScreenSharing]);
 

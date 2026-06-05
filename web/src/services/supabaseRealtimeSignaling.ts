@@ -2,13 +2,13 @@ import { getSupabase, syncRealtimeAuth } from '@/lib/supabase';
 import { toCall } from '@/lib/mappers';
 import type { CallSession, CallType, CallSignal } from '@/types';
 
-/** WebRTC signaling via Realtime broadcast. Ring uses DB + broadcast (rows deleted on end — no history). */
+/** WebRTC signaling via Realtime broadcast. Ring uses DB + broadcast; call rows kept for history. */
 
 type RoomHandlerEntry = {
   userId: string;
   onSignal: (signal: CallSignal) => void;
   onPeerReady?: () => void;
-  onHangup?: () => void;
+  onHangup?: (status?: CallSession['status']) => void;
 };
 
 const callMeta = new Map<string, { callerId: string; calleeId: string }>();
@@ -65,10 +65,6 @@ function ensureDbCallsChannel() {
     .subscribe();
 }
 
-async function deleteCallRow(callId: string) {
-  await getSupabase().from('calls').delete().eq('id', callId);
-}
-
 function dispatchSignal(callId: string, to: string, signal: CallSignal) {
   for (const entry of roomHandlers.get(callId) ?? []) {
     if (entry.userId === to) entry.onSignal(signal);
@@ -81,9 +77,18 @@ function dispatchPeerReady(callId: string, fromUserId: string) {
   }
 }
 
-function dispatchHangup(callId: string) {
+async function persistCallStatus(callId: string, status: CallSession['status']) {
+  const patch: Record<string, unknown> = { status };
+  if (status === 'active') patch.started_at = new Date().toISOString();
+  if (status === 'ended' || status === 'declined' || status === 'missed') {
+    patch.ended_at = new Date().toISOString();
+  }
+  await getSupabase().from('calls').update(patch).eq('id', callId);
+}
+
+function dispatchHangup(callId: string, status?: CallSession['status']) {
   for (const entry of roomHandlers.get(callId) ?? []) {
-    entry.onHangup?.();
+    entry.onHangup?.(status);
   }
 }
 
@@ -176,6 +181,11 @@ export async function updateCallStatus(
   if (status === 'connecting' && userId && ch) {
     await ch.send({ type: 'broadcast', event: 'peer-ready', payload: { userId } });
   }
+
+  if (status === 'active' || status === 'ended' || status === 'declined' || status === 'missed') {
+    await persistCallStatus(callId, status).catch(console.error);
+  }
+
   if (status === 'ended' || status === 'declined' || status === 'missed') {
     if (ch) {
       await ch.send({ type: 'broadcast', event: 'hangup', payload: { status } }).catch(() => {});
@@ -187,7 +197,6 @@ export async function updateCallStatus(
         notifyInboxCancel(meta.calleeId),
       ]);
     }
-    await deleteCallRow(callId).catch(() => {});
   }
 }
 
@@ -228,7 +237,7 @@ export async function joinCallRoom(
   handlers: {
     onSignal: (signal: CallSignal) => void;
     onPeerReady?: () => void;
-    onHangup?: () => void;
+    onHangup?: (status?: CallSession['status']) => void;
   },
 ) {
   const sb = getSupabase();
@@ -253,7 +262,7 @@ export async function joinCallRoom(
     if (payload?.userId) dispatchPeerReady(callId, payload.userId);
   });
 
-  ch.on('broadcast', { event: 'hangup' }, () => dispatchHangup(callId));
+  ch.on('broadcast', { event: 'hangup' }, ({ payload }) => dispatchHangup(callId, payload?.status));
 
   await subscribeChannel(ch);
   callRooms.set(callId, ch);
@@ -307,9 +316,16 @@ export async function cleanupSignals(callId: string) {
     roomHandlers.delete(callId);
   }
   callMeta.delete(callId);
-  await deleteCallRow(callId).catch(() => {});
 }
 
-export async function getCallHistory(_userId: string): Promise<CallSession[]> {
-  return [];
+export async function getCallHistory(userId: string): Promise<CallSession[]> {
+  const { data } = await getSupabase()
+    .from('calls')
+    .select('*')
+    .or(`caller_id.eq.${userId},callee_id.eq.${userId}`)
+    .neq('status', 'ringing')
+    .neq('status', 'connecting')
+    .order('created_at', { ascending: false })
+    .limit(50);
+  return (data ?? []).map(toCall);
 }

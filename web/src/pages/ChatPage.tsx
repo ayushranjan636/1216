@@ -17,7 +17,7 @@ import type { Message, ReactionType } from '@/types';
 
 export function ChatPage() {
   const { profile, partner } = useAuthStore();
-  const { messages, setMessages, replyingTo, setReplyingTo, editingId, setEditingId } = useChatStore();
+  const { messages, setMessages, replyingTo, setReplyingTo, editingId, setEditingId, composing, setComposing } = useChatStore();
   const { startCall } = useCallContext();
   const [text, setText] = useState('');
   const [viewOnce, setViewOnce] = useState(false);
@@ -25,6 +25,7 @@ export function ChatPage() {
   const [uploading, setUploading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => subscribeMessages(setMessages), [setMessages]);
 
@@ -38,6 +39,20 @@ export function ChatPage() {
       if (m?.text) setText(m.text);
     }
   }, [editingId, messages]);
+
+  useEffect(() => () => {
+    setComposing(false);
+    if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
+  }, [setComposing]);
+
+  const onComposeFocus = () => {
+    if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
+    setComposing(true);
+  };
+
+  const onComposeBlur = () => {
+    blurTimerRef.current = setTimeout(() => setComposing(false), 150);
+  };
 
   const send = async () => {
     const trimmed = text.trim();
@@ -80,7 +95,7 @@ export function ChatPage() {
   const groups = groupByDate(messages);
 
   return (
-    <div className="chat-page">
+    <div className={`chat-page ${composing ? 'chat-composing' : ''}`}>
       <header className="chat-header glass">
         <img src="/logo.png" alt="" className="avatar sm" />
         <div className="chat-header-info">
@@ -145,6 +160,8 @@ export function ChatPage() {
           rows={1}
           placeholder="Message"
           value={text}
+          onFocus={onComposeFocus}
+          onBlur={onComposeBlur}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }

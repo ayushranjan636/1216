@@ -30,10 +30,12 @@ interface ChatState {
   replyingTo: import('@/types').Message | null;
   editingId: string | null;
   isTyping: boolean;
+  composing: boolean;
   setMessages: (messages: import('@/types').Message[]) => void;
   setReplyingTo: (m: import('@/types').Message | null) => void;
   setEditingId: (id: string | null) => void;
   setTyping: (v: boolean) => void;
+  setComposing: (v: boolean) => void;
 }
 
 export const useChatStore = create<ChatState>((set) => ({
@@ -41,8 +43,10 @@ export const useChatStore = create<ChatState>((set) => ({
   replyingTo: null,
   editingId: null,
   isTyping: false,
+  composing: false,
   setMessages: (messages) => set({ messages }),
   setReplyingTo: (replyingTo) => set({ replyingTo }),
   setEditingId: (editingId) => set({ editingId }),
   setTyping: (isTyping) => set({ isTyping }),
+  setComposing: (composing) => set({ composing }),
 }));

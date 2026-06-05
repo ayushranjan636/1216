@@ -18,38 +18,50 @@ export function showNotification(
   options?: { tag?: string; onClick?: () => void },
 ) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  const n = new Notification(title, {
-    body,
-    icon: '/logo.png',
-    tag: options?.tag,
-    requireInteraction: true,
-  });
-  if (options?.onClick) {
-    n.onclick = () => {
-      window.focus();
-      options.onClick?.();
-      n.close();
-    };
+  try {
+    const n = new Notification(title, {
+      body,
+      icon: '/logo.png',
+      tag: options?.tag,
+      requireInteraction: true,
+    });
+    if (options?.onClick) {
+      n.onclick = () => {
+        window.focus();
+        options.onClick?.();
+        n.close();
+      };
+    }
+  } catch {
+    /* iOS / restricted contexts */
   }
 }
 
 export function notifyIncomingCall(callerName: string, callType: CallType) {
   showNotification(
     `Incoming ${callType === 'video' ? 'Video' : 'Voice'} Call`,
-    `${callerName} is calling...`,
+    `${callerName} is calling…`,
     { tag: 'incoming-call' },
   );
 }
 
 export function notifyNewMessage(senderName: string, preview: string) {
-  showNotification(senderName, preview, { tag: 'new-message' });
+  showNotification(senderName, preview.slice(0, 120), { tag: 'new-message' });
 }
 
 export function notifyMissedCall(callerName: string) {
   showNotification('Missed Call', `You missed a call from ${callerName}`, { tag: 'missed-call' });
 }
 
+export function notifyCallDeclined(name: string) {
+  showNotification('Call Declined', `${name} declined the call`, { tag: 'call-declined' });
+}
+
 export function getNotificationPermission(): NotificationPermission | 'unsupported' {
   if (!('Notification' in window)) return 'unsupported';
   return Notification.permission;
+}
+
+export function canUseNotifications() {
+  return 'Notification' in window && Notification.permission === 'granted';
 }

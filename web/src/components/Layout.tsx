@@ -7,7 +7,9 @@ import { APP_CONFIG } from '@/config/app.config';
 import { relationshipDuration } from '@/utils/date';
 import { CallProvider } from '@/components/CallProvider';
 import { useCallStore } from '@/stores/callStore';
+import { useChatStore } from '@/stores';
 import { useThemeStore } from '@/stores/themeStore';
+import { useMessageNotifications } from '@/hooks/useMessageNotifications';
 import {
   IconMessage, IconPhone, IconSnap, IconMemories, IconNote, IconStar, IconUser,
 } from '@/components/Icons';
@@ -37,6 +39,9 @@ export function Layout() {
   const location = useLocation();
   const callMinimized = useCallStore((s) => s.callMinimized);
   const activeCall = useCallStore((s) => s.activeCall);
+  const composing = useChatStore((s) => s.composing);
+
+  useMessageNotifications();
 
   useEffect(() => {
     restoreSession().then(async (s) => {
@@ -76,10 +81,11 @@ export function Layout() {
   const dur = relationshipDuration(APP_CONFIG.relationshipStart);
   const isChatOrSnaps = location.pathname === '/chat' || location.pathname === '/snaps';
   const withCallBar = Boolean(callMinimized && activeCall);
+  const chatComposing = location.pathname === '/chat' && composing;
 
   return (
     <CallProvider>
-      <div className={`app-shell ${withCallBar ? 'app-with-call-bar' : ''}`} data-theme={theme}>
+      <div className={`app-shell ${withCallBar ? 'app-with-call-bar' : ''} ${chatComposing ? 'chat-composing-shell' : ''}`} data-theme={theme}>
         <aside className={`sidebar glass-panel ${isChatOrSnaps ? 'hidden-desktop-on-chat' : ''}`}>
           <header className="sidebar-header">
             <img src="/logo.png" alt="1216" className="sidebar-logo" />
@@ -123,7 +129,7 @@ export function Layout() {
           <Outlet />
         </main>
 
-        <nav className="mobile-tab-bar glass">
+        <nav className={`mobile-tab-bar glass ${chatComposing ? 'mobile-tab-hidden' : ''}`}>
           {MOBILE_NAV.map(({ path, label, Icon }) => (
             <button
               key={path}
