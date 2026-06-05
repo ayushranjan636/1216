@@ -6,6 +6,7 @@ import { isSupabaseMode } from '@/lib/supabase';
 import { APP_CONFIG } from '@/config/app.config';
 import { relationshipDuration } from '@/utils/date';
 import { CallProvider } from '@/components/CallProvider';
+import { useCallStore } from '@/stores/callStore';
 import { useThemeStore } from '@/stores/themeStore';
 import {
   IconMessage, IconPhone, IconSnap, IconMemories, IconNote, IconStar, IconUser,
@@ -34,6 +35,8 @@ export function Layout() {
   const { theme } = useThemeStore();
   const navigate = useNavigate();
   const location = useLocation();
+  const callMinimized = useCallStore((s) => s.callMinimized);
+  const activeCall = useCallStore((s) => s.activeCall);
 
   useEffect(() => {
     restoreSession().then(async (s) => {
@@ -72,10 +75,11 @@ export function Layout() {
 
   const dur = relationshipDuration(APP_CONFIG.relationshipStart);
   const isChatOrSnaps = location.pathname === '/chat' || location.pathname === '/snaps';
+  const withCallBar = Boolean(callMinimized && activeCall);
 
   return (
     <CallProvider>
-      <div className="app-shell" data-theme={theme}>
+      <div className={`app-shell ${withCallBar ? 'app-with-call-bar' : ''}`} data-theme={theme}>
         <aside className={`sidebar glass-panel ${isChatOrSnaps ? 'hidden-desktop-on-chat' : ''}`}>
           <header className="sidebar-header">
             <img src="/logo.png" alt="1216" className="sidebar-logo" />

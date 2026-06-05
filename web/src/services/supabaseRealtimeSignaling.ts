@@ -1,7 +1,8 @@
 import { getSupabase, syncRealtimeAuth } from '@/lib/supabase';
+import { toCall } from '@/lib/mappers';
 import type { CallSession, CallType, CallSignal } from '@/types';
 
-/** Ephemeral WebRTC signaling via Supabase Realtime — nothing saved to database. */
+/** WebRTC signaling via Realtime broadcast. Ring uses DB + broadcast (rows deleted on end — no history). */
 
 type RoomHandlerEntry = {
   userId: string;
@@ -15,6 +16,8 @@ const callRooms = new Map<string, ReturnType<ReturnType<typeof getSupabase>['cha
 const roomHandlers = new Map<string, RoomHandlerEntry[]>();
 const inboxSubs = new Map<string, ReturnType<ReturnType<typeof getSupabase>['channel']>>();
 const inboxCallbacks = new Map<string, Set<(call: CallSession | null) => void>>();
+let dbCallsChannel: ReturnType<ReturnType<typeof getSupabase>['channel']> | null = null;
+const dbWatchers = new Set<string>();
 
 function uuid() {
   return crypto.randomUUID();
@@ -38,6 +41,32 @@ async function subscribeChannel(ch: ReturnType<ReturnType<typeof getSupabase>['c
 
 function dispatchInbox(userId: string, call: CallSession | null) {
   for (const cb of inboxCallbacks.get(userId) ?? []) cb(call);
+}
+
+async function refreshDbIncoming(userId: string) {
+  const { data } = await getSupabase()
+    .from('calls')
+    .select('*')
+    .eq('callee_id', userId)
+    .eq('status', 'ringing')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  dispatchInbox(userId, data ? toCall(data) : null);
+}
+
+function ensureDbCallsChannel() {
+  if (dbCallsChannel) return;
+  dbCallsChannel = getSupabase()
+    .channel('calls-db-watch')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'calls' }, () => {
+      for (const userId of dbWatchers) refreshDbIncoming(userId);
+    })
+    .subscribe();
+}
+
+async function deleteCallRow(callId: string) {
+  await getSupabase().from('calls').delete().eq('id', callId);
 }
 
 function dispatchSignal(callId: string, to: string, signal: CallSignal) {
@@ -90,18 +119,16 @@ async function notifyInboxCancel(userId: string) {
   const inbox = sb.channel(`calls-inbox-${userId}`, {
     config: { broadcast: { ack: false, self: false } },
   });
-  await subscribeChannel(inbox);
-  await inbox.send({ type: 'broadcast', event: 'cancel', payload: {} });
-  sb.removeChannel(inbox);
+  try {
+    await subscribeChannel(inbox);
+    await inbox.send({ type: 'broadcast', event: 'cancel', payload: {} });
+  } finally {
+    sb.removeChannel(inbox);
+  }
 }
 
-export async function createCall(callerId: string, calleeId: string, type: CallType): Promise<string> {
-  const callId = uuid();
-  callMeta.set(callId, { callerId, calleeId });
+async function sendRingBroadcast(calleeId: string, payload: Record<string, unknown>) {
   const sb = getSupabase();
-  const payload = { callId, callerId, calleeId, type, startedAt: Date.now() };
-
-  // Retry ring a few times in case callee is reconnecting
   for (let attempt = 0; attempt < 3; attempt++) {
     const inbox = sb.channel(`calls-inbox-${calleeId}`, {
       config: { broadcast: { ack: false, self: false } },
@@ -110,13 +137,32 @@ export async function createCall(callerId: string, calleeId: string, type: CallT
       await subscribeChannel(inbox);
       await inbox.send({ type: 'broadcast', event: 'ring', payload });
       sb.removeChannel(inbox);
-      return callId;
-    } catch (err) {
+      return;
+    } catch {
       sb.removeChannel(inbox);
-      if (attempt === 2) throw err;
-      await new Promise((r) => setTimeout(r, 400));
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 400));
     }
   }
+}
+
+export async function createCall(callerId: string, calleeId: string, type: CallType): Promise<string> {
+  const callId = uuid();
+  callMeta.set(callId, { callerId, calleeId });
+  const sb = getSupabase();
+  const startedAt = Date.now();
+  const payload = { callId, callerId, calleeId, type, startedAt };
+
+  const { error } = await sb.from('calls').insert({
+    id: callId,
+    caller_id: callerId,
+    callee_id: calleeId,
+    type,
+    status: 'ringing',
+    started_at: new Date(startedAt).toISOString(),
+  });
+  if (error) throw new Error(error.message);
+
+  await sendRingBroadcast(calleeId, payload);
   return callId;
 }
 
@@ -132,7 +178,7 @@ export async function updateCallStatus(
   }
   if (status === 'ended' || status === 'declined' || status === 'missed') {
     if (ch) {
-      await ch.send({ type: 'broadcast', event: 'hangup', payload: { status } });
+      await ch.send({ type: 'broadcast', event: 'hangup', payload: { status } }).catch(() => {});
     }
     const meta = callMeta.get(callId);
     if (meta) {
@@ -141,6 +187,7 @@ export async function updateCallStatus(
         notifyInboxCancel(meta.calleeId),
       ]);
     }
+    await deleteCallRow(callId).catch(() => {});
   }
 }
 
@@ -150,15 +197,22 @@ export function subscribeToIncomingCalls(userId: string, cb: (call: CallSession 
     callbacks = new Set();
     inboxCallbacks.set(userId, callbacks);
     ensureInboxChannel(userId);
+    ensureDbCallsChannel();
+    dbWatchers.add(userId);
+    refreshDbIncoming(userId);
   }
   callbacks.add(cb);
 
+  const poll = setInterval(() => refreshDbIncoming(userId), 2500);
+
   return () => {
+    clearInterval(poll);
     const set = inboxCallbacks.get(userId);
     if (!set) return;
     set.delete(cb);
     if (set.size === 0) {
       inboxCallbacks.delete(userId);
+      dbWatchers.delete(userId);
       const ch = inboxSubs.get(userId);
       if (ch) {
         getSupabase().removeChannel(ch);
@@ -253,6 +307,7 @@ export async function cleanupSignals(callId: string) {
     roomHandlers.delete(callId);
   }
   callMeta.delete(callId);
+  await deleteCallRow(callId).catch(() => {});
 }
 
 export async function getCallHistory(_userId: string): Promise<CallSession[]> {

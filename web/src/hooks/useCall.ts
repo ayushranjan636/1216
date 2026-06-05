@@ -29,16 +29,19 @@ export function useCall() {
   const notifiedRef = useRef<string | null>(null);
   const initiatorReadyRef = useRef(false);
   const activeCallRef = useRef<CallSession | null>(null);
+  const callEndedRef = useRef(false);
 
   const {
     activeCall,
     incomingCall,
+    callMinimized,
     isMuted,
     isCameraOff,
     isScreenSharing,
     callDuration,
     setActiveCall,
     setIncomingCall,
+    setCallMinimized,
     toggleMute,
     toggleCamera,
     setScreenSharing,
@@ -51,10 +54,22 @@ export function useCall() {
 
   activeCallRef.current = activeCall;
 
+  const tearDown = useCallback(() => {
+    if (callEndedRef.current) return;
+    callEndedRef.current = true;
+    clearTimer(ringTimerRef);
+    signalUnsubRef.current?.();
+    signalUnsubRef.current = null;
+    callManagerRef.current?.endCall();
+    callManagerRef.current = null;
+    initiatorReadyRef.current = false;
+    reset();
+  }, [reset]);
+
   useEffect(() => {
     if (!profile) return;
     const unsub = subscribeToIncomingCalls(profile.uid, (call) => {
-      if (activeCallRef.current) {
+      if (activeCallRef.current || callEndedRef.current) {
         if (!call) setIncomingCall(null);
         return;
       }
@@ -83,8 +98,10 @@ export function useCall() {
 
   const markConnected = useCallback(
     async (call: CallSession) => {
+      if (callEndedRef.current) return;
       clearTimer(ringTimerRef);
       await updateCallStatus(call.id, 'active');
+      if (callEndedRef.current) return;
       setActiveCall({ ...call, status: 'active', startedAt: call.startedAt ?? Date.now() });
     },
     [setActiveCall],
@@ -92,8 +109,11 @@ export function useCall() {
 
   const attachManagerEvents = useCallback(
     (manager: CallManager, call: CallSession) => {
-      manager.onLocalStream = setLocalStream;
+      manager.onLocalStream = (stream) => {
+        if (!callEndedRef.current) setLocalStream(stream);
+      };
       manager.onRemoteStream = (stream) => {
+        if (callEndedRef.current) return;
         setRemoteStream(stream);
         clearTimer(ringTimerRef);
       };
@@ -120,7 +140,9 @@ export function useCall() {
   const startCall = useCallback(
     async (type: CallType) => {
       if (!profile || !partner || activeCall) return;
+      callEndedRef.current = false;
       initiatorReadyRef.current = false;
+      setCallMinimized(false);
 
       try {
         const callId = await createCall(profile.uid, partner.uid, type);
@@ -136,10 +158,9 @@ export function useCall() {
         setIncomingCall(null);
 
         ringTimerRef.current = setTimeout(async () => {
-          await updateCallStatus(callId, 'missed');
-          callManagerRef.current?.endCall();
-          callManagerRef.current = null;
-          reset();
+          if (callEndedRef.current) return;
+          await updateCallStatus(callId, 'missed').catch(console.error);
+          tearDown();
         }, 45000);
 
         const manager = new CallManager(callId, profile.uid, partner.uid, type === 'video');
@@ -152,37 +173,34 @@ export function useCall() {
               manager.handleSignal(signal).catch(console.error);
             },
             onPeerReady: async () => {
-              if (initiatorReadyRef.current) return;
+              if (initiatorReadyRef.current || callEndedRef.current) return;
               initiatorReadyRef.current = true;
               try {
                 await manager.initialize(true);
               } catch (err) {
                 console.error(err);
-                await updateCallStatus(callId, 'ended');
-                reset();
+                await updateCallStatus(callId, 'ended').catch(console.error);
+                tearDown();
               }
             },
-            onHangup: () => {
-              clearTimer(ringTimerRef);
-              callManagerRef.current?.endCall();
-              callManagerRef.current = null;
-              reset();
-            },
+            onHangup: () => tearDown(),
           });
         } else {
           wireLegacySignals(manager, call, true);
         }
       } catch (err) {
         console.error('Failed to start call', err);
-        reset();
+        tearDown();
       }
     },
-    [profile, partner, activeCall, setActiveCall, setIncomingCall, reset, attachManagerEvents, wireLegacySignals],
+    [profile, partner, activeCall, setActiveCall, setIncomingCall, setCallMinimized, tearDown, attachManagerEvents, wireLegacySignals],
   );
 
   const acceptCall = useCallback(async () => {
     if (!incomingCall || !profile) return;
+    callEndedRef.current = false;
     clearTimer(ringTimerRef);
+    setCallMinimized(false);
     const call = { ...incomingCall, status: 'connecting' as const };
     setActiveCall(call);
     setIncomingCall(null);
@@ -202,14 +220,8 @@ export function useCall() {
           onSignal: (signal) => {
             manager.handleSignal(signal).catch(console.error);
           },
-          onHangup: () => {
-            clearTimer(ringTimerRef);
-            callManagerRef.current?.endCall();
-            callManagerRef.current = null;
-            reset();
-          },
+          onHangup: () => tearDown(),
         });
-        // Set up WebRTC before telling caller to send the offer
         await manager.initialize(false);
         await updateCallStatus(incomingCall.id, 'connecting', profile.uid);
       } else {
@@ -218,32 +230,32 @@ export function useCall() {
       }
     } catch (err) {
       console.error(err);
-      await updateCallStatus(incomingCall.id, 'declined');
-      reset();
+      await updateCallStatus(incomingCall.id, 'declined').catch(console.error);
+      tearDown();
     }
-  }, [incomingCall, profile, setActiveCall, setIncomingCall, reset, attachManagerEvents, wireLegacySignals]);
+  }, [incomingCall, profile, setActiveCall, setIncomingCall, setCallMinimized, tearDown, attachManagerEvents, wireLegacySignals]);
 
   const declineCall = useCallback(async () => {
     if (!incomingCall) return;
+    const callId = incomingCall.id;
     clearTimer(ringTimerRef);
-    await updateCallStatus(incomingCall.id, 'declined');
-    if (partner) notifyMissedCall(partner.displayName);
     setIncomingCall(null);
+    notifiedRef.current = null;
+    await updateCallStatus(callId, 'declined').catch(console.error);
+    if (partner) notifyMissedCall(partner.displayName);
   }, [incomingCall, partner, setIncomingCall]);
 
   const endCall = useCallback(async () => {
-    clearTimer(ringTimerRef);
-    if (activeCall) {
-      await updateCallStatus(activeCall.id, 'ended');
-      await cleanupSignals(activeCall.id);
+    const callId = activeCallRef.current?.id;
+    tearDown();
+    if (callId) {
+      await updateCallStatus(callId, 'ended').catch(console.error);
+      await cleanupSignals(callId).catch(console.error);
     }
-    signalUnsubRef.current?.();
-    signalUnsubRef.current = null;
-    callManagerRef.current?.endCall();
-    callManagerRef.current = null;
-    initiatorReadyRef.current = false;
-    reset();
-  }, [activeCall, reset]);
+  }, [tearDown]);
+
+  const minimizeCall = useCallback(() => setCallMinimized(true), [setCallMinimized]);
+  const expandCall = useCallback(() => setCallMinimized(false), [setCallMinimized]);
 
   const handleToggleMute = useCallback(() => {
     toggleMute();
@@ -270,6 +282,7 @@ export function useCall() {
   return {
     activeCall,
     incomingCall,
+    callMinimized,
     isMuted,
     isCameraOff,
     isScreenSharing,
@@ -278,6 +291,8 @@ export function useCall() {
     acceptCall,
     declineCall,
     endCall,
+    minimizeCall,
+    expandCall,
     toggleMute: handleToggleMute,
     toggleCamera: handleToggleCamera,
     toggleScreenShare,

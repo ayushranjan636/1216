@@ -4,6 +4,7 @@ import type { CallSession } from '@/types';
 interface CallState {
   activeCall: CallSession | null;
   incomingCall: CallSession | null;
+  callMinimized: boolean;
   isMuted: boolean;
   isCameraOff: boolean;
   isScreenSharing: boolean;
@@ -12,6 +13,7 @@ interface CallState {
   remoteStream: MediaStream | null;
   setActiveCall: (call: CallSession | null) => void;
   setIncomingCall: (call: CallSession | null) => void;
+  setCallMinimized: (v: boolean) => void;
   toggleMute: () => void;
   toggleCamera: () => void;
   setScreenSharing: (v: boolean) => void;
@@ -24,6 +26,7 @@ interface CallState {
 export const useCallStore = create<CallState>((set) => ({
   activeCall: null,
   incomingCall: null,
+  callMinimized: false,
   isMuted: false,
   isCameraOff: false,
   isScreenSharing: false,
@@ -32,6 +35,7 @@ export const useCallStore = create<CallState>((set) => ({
   remoteStream: null,
   setActiveCall: (activeCall) => set({ activeCall }),
   setIncomingCall: (incomingCall) => set({ incomingCall }),
+  setCallMinimized: (callMinimized) => set({ callMinimized }),
   toggleMute: () => set((s) => ({ isMuted: !s.isMuted })),
   toggleCamera: () => set((s) => ({ isCameraOff: !s.isCameraOff })),
   setScreenSharing: (isScreenSharing) => set({ isScreenSharing }),
@@ -42,6 +46,7 @@ export const useCallStore = create<CallState>((set) => ({
     set({
       activeCall: null,
       incomingCall: null,
+      callMinimized: false,
       isMuted: false,
       isCameraOff: false,
       isScreenSharing: false,
