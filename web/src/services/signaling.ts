@@ -9,7 +9,7 @@ import {
   SIGNALS_KEY,
 } from './demoBridge';
 import * as localApi from './http';
-import * as sbExtras from './supabaseExtras';
+import * as sbRealtime from './supabaseRealtimeSignaling';
 
 const TOKEN_KEY = '1216_token';
 
@@ -89,7 +89,7 @@ function mode() {
 }
 
 export async function createCall(callerId: string, calleeId: string, type: CallType) {
-  if (mode() === 'supabase') return sbExtras.createCall(callerId, calleeId, type);
+  if (mode() === 'supabase') return sbRealtime.createCall(callerId, calleeId, type);
   if (mode() === 'demo') return demoSignaling.createCall(callerId, calleeId, type);
   const { id } = await localApiFetch<{ id: string }>('/calls', {
     method: 'POST',
@@ -98,14 +98,14 @@ export async function createCall(callerId: string, calleeId: string, type: CallT
   return id;
 }
 
-export async function updateCallStatus(callId: string, status: CallSession['status']) {
-  if (mode() === 'supabase') return sbExtras.updateCallStatus(callId, status);
+export async function updateCallStatus(callId: string, status: CallSession['status'], userId?: string) {
+  if (mode() === 'supabase') return sbRealtime.updateCallStatus(callId, status, userId);
   if (mode() === 'demo') return demoSignaling.updateCallStatus(callId, status);
   return localApiFetch(`/calls/${callId}`, { method: 'PATCH', body: JSON.stringify({ status }) });
 }
 
 export function subscribeToIncomingCalls(userId: string, cb: (call: CallSession | null) => void) {
-  if (mode() === 'supabase') return sbExtras.subscribeToIncomingCalls(userId, cb);
+  if (mode() === 'supabase') return sbRealtime.subscribeToIncomingCalls(userId, cb);
   if (mode() === 'demo') return demoSignaling.subscribeToIncomingCalls(userId, cb);
   const poll = setInterval(async () => {
     try {
@@ -117,7 +117,7 @@ export function subscribeToIncomingCalls(userId: string, cb: (call: CallSession 
 }
 
 export async function sendSignal(callId: string, from: string, to: string, type: CallSignal['type'], payload: string) {
-  if (mode() === 'supabase') return sbExtras.sendSignal(callId, from, to, type, payload);
+  if (mode() === 'supabase') return sbRealtime.sendSignal(callId, from, to, type, payload);
   if (mode() === 'demo') return demoSignaling.sendSignal(callId, from, to, type, payload);
   return localApiFetch('/calls/signals', {
     method: 'POST',
@@ -126,7 +126,7 @@ export async function sendSignal(callId: string, from: string, to: string, type:
 }
 
 export function subscribeToSignals(callId: string, userId: string, cb: (signal: CallSignal) => void) {
-  if (mode() === 'supabase') return sbExtras.subscribeToSignals(callId, userId, cb);
+  if (mode() === 'supabase') return sbRealtime.subscribeToSignals(callId, userId, cb);
   if (mode() === 'demo') return demoSignaling.subscribeToSignals(callId, userId, cb);
   let since = Date.now();
   const poll = setInterval(async () => {
@@ -141,15 +141,23 @@ export function subscribeToSignals(callId: string, userId: string, cb: (signal: 
 }
 
 export async function cleanupSignals(callId: string) {
-  if (mode() === 'supabase') return sbExtras.cleanupSignals(callId);
+  if (mode() === 'supabase') return sbRealtime.cleanupSignals(callId);
   if (mode() === 'demo') return demoSignaling.cleanupSignals(callId);
   return localApiFetch(`/calls/signals/${callId}`, { method: 'DELETE' });
 }
 
 export async function getCallHistory(userId: string): Promise<CallSession[]> {
-  if (mode() === 'supabase') return sbExtras.getCallHistory(userId);
+  if (mode() === 'supabase') return sbRealtime.getCallHistory(userId);
   if (mode() === 'demo') return demoSignaling.getCallHistory(userId);
   return localApiFetch<CallSession[]>(`/calls/history/${userId}`);
+}
+
+export async function joinCallRoom(
+  callId: string,
+  userId: string,
+  handlers: Parameters<typeof sbRealtime.joinCallRoom>[2],
+) {
+  if (mode() === 'supabase') return sbRealtime.joinCallRoom(callId, userId, handlers);
 }
 
 export { demoSignaling };

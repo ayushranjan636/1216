@@ -39,7 +39,19 @@ export function getSupabase(): SupabaseClient {
         autoRefreshToken: true,
         detectSessionInUrl: true,
       },
+      realtime: {
+        params: { eventsPerSecond: 20 },
+      },
     });
   }
   return client;
+}
+
+/** Ensure Realtime WebSocket uses the current JWT (required for reliable broadcast). */
+export async function syncRealtimeAuth() {
+  const sb = getSupabase();
+  const { data: { session } } = await sb.auth.getSession();
+  if (session?.access_token) {
+    sb.realtime.setAuth(session.access_token);
+  }
 }

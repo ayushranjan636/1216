@@ -9,6 +9,7 @@ import {
   fetchMyProfile,
   fetchStats as sbFetchStats,
   trackOnline,
+  updateDisplayName as sbUpdateDisplayName,
 } from './supabaseAuth';
 import { apiFetch } from './http';
 import { demo, ACCOUNTS, DEVICE_SLOTS } from './apiDemo';
@@ -85,4 +86,10 @@ export async function fetchStats(uid: string) {
 }
 
 export { trackOnline };
+
+export async function updateDisplayName(uid: string, displayName: string): Promise<UserProfile> {
+  if (isSupabaseMode()) return sbUpdateDisplayName(uid, displayName);
+  throw new Error('Display name can only be updated in Supabase mode');
+}
+
 export { isDemoMode } from '@/config/app.config';

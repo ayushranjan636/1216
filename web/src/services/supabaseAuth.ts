@@ -1,4 +1,4 @@
-import { getSupabase } from '@/lib/supabase';
+import { getSupabase, syncRealtimeAuth } from '@/lib/supabase';
 import { toProfile } from '@/lib/mappers';
 import type { AuthSession, UserProfile } from '@/types';
 
@@ -9,6 +9,7 @@ export async function supabaseLogin(email: string, password: string): Promise<Au
   if (!data.session || !data.user) throw new Error('Login failed');
 
   const profile = await fetchMyProfile(data.user.id);
+  await syncRealtimeAuth();
   return {
     token: data.session.access_token,
     user: {
@@ -27,6 +28,7 @@ export async function supabaseRestoreSession(): Promise<AuthSession | null> {
   if (!session?.user) return null;
 
   const profile = await fetchMyProfile(session.user.id).catch(() => null);
+  await syncRealtimeAuth();
   return {
     token: session.access_token,
     user: {
@@ -91,16 +93,31 @@ export function trackOnline(userId: string) {
   return () => { sb.removeChannel(channel); };
 }
 
+export async function updateDisplayName(userId: string, displayName: string): Promise<UserProfile> {
+  const name = displayName.trim();
+  if (!name) throw new Error('Name cannot be empty');
+
+  const sb = getSupabase();
+  const { error: profileError } = await sb
+    .from('profiles')
+    .update({ display_name: name })
+    .eq('id', userId);
+  if (profileError) throw new Error(profileError.message);
+
+  await sb.auth.updateUser({ data: { display_name: name } });
+
+  return fetchMyProfile(userId);
+}
+
 export async function fetchStats(_userId: string) {
   const sb = getSupabase();
-  const [msgs, calls, mems] = await Promise.all([
+  const [msgs, mems] = await Promise.all([
     sb.from('messages').select('id', { count: 'exact', head: true }).is('deleted_at', null),
-    sb.from('calls').select('id', { count: 'exact', head: true }),
     sb.from('memories').select('id', { count: 'exact', head: true }),
   ]);
   return {
     totalMessages: msgs.count ?? 0,
-    totalCalls: calls.count ?? 0,
+    totalCalls: 0,
     totalMemories: mems.count ?? 0,
   };
 }

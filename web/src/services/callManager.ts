@@ -13,6 +13,8 @@ export class CallManager {
   private remoteUserId: string;
   private isVideo: boolean;
   private videoSender: RTCRtpSender | null = null;
+  private pendingSignals: CallSignal[] = [];
+  private remoteDescriptionSet = false;
 
   onLocalStream?: (stream: MediaStream) => void;
   onRemoteStream?: (stream: MediaStream) => void;
@@ -25,7 +27,7 @@ export class CallManager {
     this.isVideo = isVideo;
   }
 
-  async initialize(isInitiator: boolean) {
+  private createPeerConnection() {
     this.pc = new RTCPeerConnection({ iceServers: [...APP_CONFIG.stunServers] });
 
     this.pc.onicecandidate = (event) => {
@@ -36,18 +38,30 @@ export class CallManager {
           this.remoteUserId,
           'ice-candidate',
           JSON.stringify(event.candidate),
-        );
+        ).catch(console.error);
       }
     };
 
     this.pc.ontrack = (event) => {
-      this.remoteStream = event.streams[0];
+      this.remoteStream = event.streams[0] ?? new MediaStream([event.track]);
       this.onRemoteStream?.(this.remoteStream);
     };
 
     this.pc.onconnectionstatechange = () => {
-      this.onConnectionStateChange?.(this.pc?.connectionState ?? 'closed');
+      const state = this.pc?.connectionState ?? 'closed';
+      if (state === 'connected') this.onConnectionStateChange?.('connected');
     };
+
+    this.pc.oniceconnectionstatechange = () => {
+      const ice = this.pc?.iceConnectionState;
+      if (ice === 'connected' || ice === 'completed') {
+        this.onConnectionStateChange?.('connected');
+      }
+    };
+  }
+
+  async initialize(isInitiator: boolean) {
+    this.createPeerConnection();
 
     this.cameraStream = await navigator.mediaDevices.getUserMedia({
       audio: true,
@@ -61,9 +75,11 @@ export class CallManager {
       if (track.kind === 'video') this.videoSender = sender;
     });
 
+    await this.flushPendingSignals();
+
     if (isInitiator) {
-      const offer = await this.pc.createOffer();
-      await this.pc.setLocalDescription(offer);
+      const offer = await this.pc!.createOffer();
+      await this.pc!.setLocalDescription(offer);
       await sendSignal(
         this.callId,
         this.localUserId,
@@ -74,13 +90,26 @@ export class CallManager {
     }
   }
 
+  private async flushPendingSignals() {
+    const queued = [...this.pendingSignals];
+    this.pendingSignals = [];
+    for (const signal of queued) {
+      await this.handleSignal(signal);
+    }
+  }
+
   async handleSignal(signal: CallSignal) {
-    if (!this.pc) return;
+    if (!this.pc) {
+      this.pendingSignals.push(signal);
+      return;
+    }
+
     const payload = JSON.parse(signal.payload);
 
     switch (signal.type) {
-      case 'offer':
+      case 'offer': {
         await this.pc.setRemoteDescription(payload);
+        this.remoteDescriptionSet = true;
         const answer = await this.pc.createAnswer();
         await this.pc.setLocalDescription(answer);
         await sendSignal(
@@ -90,13 +119,39 @@ export class CallManager {
           'answer',
           JSON.stringify(answer),
         );
+        await this.drainIceCandidates();
         break;
-      case 'answer':
+      }
+      case 'answer': {
         await this.pc.setRemoteDescription(payload);
+        this.remoteDescriptionSet = true;
+        await this.drainIceCandidates();
         break;
-      case 'ice-candidate':
-        await this.pc.addIceCandidate(payload);
+      }
+      case 'ice-candidate': {
+        if (!this.remoteDescriptionSet) {
+          this.pendingSignals.push(signal);
+          return;
+        }
+        try {
+          await this.pc.addIceCandidate(payload);
+        } catch (err) {
+          console.warn('ICE candidate error', err);
+        }
         break;
+      }
+    }
+  }
+
+  private async drainIceCandidates() {
+    const ice = this.pendingSignals.filter((s) => s.type === 'ice-candidate');
+    this.pendingSignals = this.pendingSignals.filter((s) => s.type !== 'ice-candidate');
+    for (const signal of ice) {
+      try {
+        await this.pc!.addIceCandidate(JSON.parse(signal.payload));
+      } catch (err) {
+        console.warn('ICE candidate error', err);
+      }
     }
   }
 
@@ -153,6 +208,8 @@ export class CallManager {
     this.screenStream = null;
     this.remoteStream = null;
     this.videoSender = null;
+    this.pendingSignals = [];
+    this.remoteDescriptionSet = false;
   }
 
   getLocalStream() {

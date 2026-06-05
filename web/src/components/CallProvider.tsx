@@ -27,6 +27,7 @@ function CallOverlay() {
   const { partner } = useAuthStore();
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
     if (localVideoRef.current && localStream) {
@@ -37,6 +38,10 @@ function CallOverlay() {
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
       remoteVideoRef.current.srcObject = remoteStream;
+    }
+    if (remoteAudioRef.current && remoteStream) {
+      remoteAudioRef.current.srcObject = remoteStream;
+      remoteAudioRef.current.play().catch(() => {});
     }
   }, [remoteStream]);
 
@@ -49,6 +54,7 @@ function CallOverlay() {
 
   return (
     <div className={`call-overlay ${isVideo && isActive ? 'call-overlay-video' : ''}`}>
+      <audio ref={remoteAudioRef} autoPlay playsInline className="call-remote-audio" />
       {isVideo && isActive && (
         <div className="call-video-stage">
           <video ref={remoteVideoRef} autoPlay playsInline className="call-remote-video" />

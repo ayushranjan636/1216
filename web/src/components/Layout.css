@@ -347,6 +347,14 @@
   justify-content: center;
 }
 
+.call-remote-audio {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .call-video-stage {
   position: absolute;
   inset: 0;
@@ -816,6 +824,11 @@
 .profile-avatar { width: 120px; height: 120px; border-radius: 50%; border: 3px solid var(--primary); object-fit: cover; }
 .profile-partner { color: var(--secondary); margin-top: 4px; }
 .settings-row { width: 100%; display: flex; align-items: center; gap: 12px; padding: 16px; border-radius: 14px; border: 1px solid var(--glass-border); background: var(--glass); cursor: pointer; color: var(--text); margin-bottom: 12px; }
+.name-edit-block { margin: 8px 0 4px; width: min(100%, 280px); margin-inline: auto; }
+.name-edit-input { width: 100%; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--glass-border); background: var(--glass); color: var(--text); font-size: 1rem; text-align: center; }
+.name-edit-actions { display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
+.name-edit-btn { margin-top: 4px; font-size: 0.85rem; padding: 4px 12px; }
+.name-edit-error { color: var(--danger, #e55); font-size: 0.85rem; margin-top: 8px; }
 .settings-action { width: 100%; margin-bottom: 12px; }
 .notif-ok { text-align: center; color: var(--online); margin-bottom: 12px; font-size: 14px; }
 .sign-out-btn { width: 100%; padding: 14px; margin-top: 8px; }
