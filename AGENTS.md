@@ -1,3 +1,5 @@
-# Expo HAS CHANGED
+# 1216 — Agent notes
 
-Read the exact versioned docs at https://docs.expo.dev/versions/v56.0.0/ before writing any code.
+Web-only app. Active code lives in `web/` (frontend) and `server/` (SQLite API).
+
+Run locally: `cd server && npm start` and `cd web && npm run dev`.
