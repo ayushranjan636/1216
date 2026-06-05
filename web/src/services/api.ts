@@ -42,7 +42,9 @@ export async function login(email: string, password: string): Promise<AuthSessio
     }
     return demo.login(ACCOUNTS[key as keyof typeof ACCOUNTS].slot, key);
   }
-  throw new Error('Configure Supabase or enable demo mode');
+  throw new Error(
+    'Supabase is not configured in this deployment. In Vercel, add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY, then Redeploy (not just save).',
+  );
 }
 
 export async function restoreSession(): Promise<AuthSession | null> {
